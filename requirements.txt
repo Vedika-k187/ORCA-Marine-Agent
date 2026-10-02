@@ -1,0 +1,22 @@
+﻿# Core Agentic & Graph Framework
+langgraph>=1.0.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Geospatial & Oceanographic Data
+shapely>=2.0.0
+geopandas>=1.0.0
+pandas>=2.0.0
+numpy>=1.26.0
+
+# Visualization & User Interface
+streamlit>=1.35.0
+folium>=0.17.0
+plotly>=5.22.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

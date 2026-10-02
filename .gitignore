@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# Local SQLite databases & Session stores
+data/orca_sessions.db
+data/*.db
+*.db
+*.sqlite3
+
+# Streamlit Local Secrets
+.streamlit/secrets.toml
+.streamlit/*.local.toml
+
+# IDE & Editor Configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & OS artifacts
+*.log
+.DS_Store
+Thumbs.db
