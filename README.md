@@ -134,6 +134,25 @@ Every data item presented in ORCA is stamped with its authentic provenance class
 > **IMPORTANT:** ORCA never disguises sample or mock fixtures as live data. All responses, charts, and tables display provenance badges (`[LIVE]`, `[SAMPLE]`, `[HISTORICAL]`, `[MOCK]`).
 
 ---
+## 📸 Application Screenshots
+
+### ORCA Marine Intelligence Dashboard
+The main dashboard provides the natural-language query interface, execution status, data provenance, and agentic response.
+
+![ORCA Dashboard](docs/screenshots/orca-dashboard.png)
+
+### Marine Analytics & Visualization
+ORCA presents marine conditions through maps, charts, and spatial analytics.
+
+![Marine Analytics](docs/screenshots/marine-analytics.png)
+
+### Dynamic Agent Execution
+The execution trace shows how ORCA dynamically coordinates specialized agents based on the user's query.
+
+![Agent Execution](docs/screenshots/agent-execution.png)
+
+
+---
 
 ## Agentic Features
 
@@ -239,7 +258,7 @@ Open your browser at `http://localhost:8501`.
 
 ## Running the Automated Test Suite
 
-ORCA includes 80 comprehensive tests covering unit tools, LangGraph workflows, replanning loops, and end-to-end user scenarios:
+ORCA includes 84 comprehensive tests covering unit tools, LangGraph workflows, replanning loops, multi-location comparisons, and end-to-end user scenarios:
 
 ```bash
 pytest -q
