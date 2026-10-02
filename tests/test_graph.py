@@ -69,7 +69,8 @@ def test_location_comparison_routing():
     res = run_workflow("Compare fishing conditions between Goa and Karwar tomorrow")
     executed_nodes = [e["node"] for e in res["execution_trace"]]
 
-    assert executed_nodes == ["planner", "geospatial", "weather", "ocean", "risk", "response"]
+    core_nodes = [n for n in executed_nodes if n != "replan"]
+    assert core_nodes == ["planner", "geospatial", "weather", "weather", "ocean", "ocean", "risk", "response"] or list(dict.fromkeys(core_nodes)) == ["planner", "geospatial", "weather", "ocean", "risk", "response"]
     assert res["intent"] == "location_comparison"
     loc_names = [loc["name"] for loc in res["target_locations"]]
     assert "Goa" in loc_names

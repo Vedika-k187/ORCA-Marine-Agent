@@ -164,6 +164,58 @@ class RiskAgent:
         # unless severe advisory or extreme condition is actively being simulated:
         final_status = deterministic_status if deterministic_status in ["HIGH_RISK", "ELEVATED"] else "pending_real_data"
 
+        raw_locs = state.get("target_locations", [])
+        locations = [loc.get("name") if isinstance(loc, dict) else str(loc) for loc in raw_locs]
+        if not locations:
+            locations = ["Ratnagiri"]
+        unique_locations = list(dict.fromkeys(locations))
+
+        w_by_loc = weather_payload.get("by_location") or {}
+        o_by_loc = (state.get("ocean_data") or {}).get("by_location") or {}
+
+        risk_by_location: Dict[str, Any] = {}
+        for loc in unique_locations:
+            loc_w = w_by_loc.get(loc, {}).get("weather_data") or weather_inner
+            loc_m = o_by_loc.get(loc, {}).get("marine_telemetry") or marine_inner
+            loc_wind = loc_w.get("wind_speed")
+            loc_wave = loc_m.get("wave_height")
+
+            loc_breaches = []
+            if loc_wind is not None and loc_wind >= THRESHOLDS["wind_speed_high_kmh"]:
+                loc_breaches.append(f"Wind speed ({loc_wind} km/h) >= {THRESHOLDS['wind_speed_high_kmh']} km/h (HIGH)")
+            elif loc_wind is not None and loc_wind >= THRESHOLDS["wind_speed_elevated_kmh"]:
+                loc_breaches.append(f"Wind speed ({loc_wind} km/h) >= {THRESHOLDS['wind_speed_elevated_kmh']} km/h (ELEVATED)")
+
+            if loc_wave is not None and loc_wave >= THRESHOLDS["wave_height_high_m"]:
+                loc_breaches.append(f"Significant wave height ({loc_wave}m) >= {THRESHOLDS['wave_height_high_m']}m (HIGH)")
+            elif loc_wave is not None and loc_wave >= THRESHOLDS["wave_height_elevated_m"]:
+                loc_breaches.append(f"Significant wave height ({loc_wave}m) >= {THRESHOLDS['wave_height_elevated_m']}m (ELEVATED)")
+
+            loc_restricted = []
+            if geo_payload.get("contexts", {}).get(loc):
+                for z in geo_payload["contexts"][loc].get("inside_restricted_zones", []):
+                    loc_restricted.append(f"{z.get('name')} ({z.get('restriction_level')})")
+
+            if has_severe_advisory:
+                l_risk = "HIGH_RISK"
+                l_reason = f"Official severe advisory active for {loc}."
+            elif (loc_wave is not None and loc_wave >= THRESHOLDS["wave_height_high_m"]) or (loc_wind is not None and loc_wind >= THRESHOLDS["wind_speed_high_kmh"]):
+                l_risk = "HIGH_RISK"
+                l_reason = f"Extreme metocean conditions detected at {loc}."
+            elif len(loc_breaches) >= 2 or loc_restricted:
+                l_risk = "ELEVATED"
+                l_reason = f"Elevated caution at {loc}: {', '.join(loc_breaches + loc_restricted)}."
+            else:
+                l_risk = "UNKNOWN"
+                l_reason = f"Preliminary observations for {loc} recorded; non-authoritative."
+
+            risk_by_location[loc] = {
+                "location": loc,
+                "risk_level": l_risk,
+                "reason": l_reason,
+                "breaches": loc_breaches,
+            }
+
         risk_obs = {
             "source": "ORCA Multi-Parameter Risk Evaluator",
             "source_type": "mock",
@@ -178,6 +230,7 @@ class RiskAgent:
                 "STANDARD_NON_AUTHORITATIVE"
             ),
             "documented_thresholds": THRESHOLDS,
+            "by_location": risk_by_location,
         }
 
         trace_event = {
@@ -189,6 +242,8 @@ class RiskAgent:
                 "status": final_status,
                 "what_if_simulated": what_if_active,
                 "breaches": len(threshold_breaches),
+                "locations": unique_locations,
+                "risk_levels": {l: risk_by_location[l]["risk_level"] for l in unique_locations},
             },
         }
 

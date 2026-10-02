@@ -92,7 +92,12 @@ def display_scenario(scenario_id: str, title: str, query: str, session_id: str =
         print(f"    Summary: {corr.get('correlation_summary')}")
 
     print(f"\n[4] AGENT EXECUTION FLOW & OPERATIONAL TRACE:")
-    flow = [e["node"] for e in result.get("execution_trace", [])]
+    flow = [
+        f"{e['node']}[{e.get('details', {}).get('location')}]"
+        if e.get("details", {}).get("location") and e.get("node") in ["weather", "ocean"]
+        else e["node"]
+        for e in result.get("execution_trace", [])
+    ]
     print(f"    Flow: {' -> '.join(flow)}")
 
     print(f"\n[5] FINAL EVIDENCE-BACKED RESPONSE:")

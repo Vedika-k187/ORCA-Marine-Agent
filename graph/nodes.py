@@ -73,27 +73,49 @@ def planner_node(state: ORCAState) -> Dict[str, Any]:
 
 
 def weather_node(state: ORCAState) -> Dict[str, Any]:
-    """Invokes WeatherAgent to collect meteorological forecast telemetry."""
+    """Invokes WeatherAgent to collect meteorological forecast telemetry for target locations."""
+    raw_locs = state.get("target_locations", [])
+    locations = [
+        loc.get("name") if isinstance(loc, dict) else str(loc)
+        for loc in raw_locs
+    ]
+    # Execute for each location during multi-location comparisons; otherwise target primary location
+    if state.get("intent") == "location_comparison" and len(locations) > 1:
+        loc = None
+    else:
+        loc = locations[0] if locations else "Ratnagiri"
+
     task = Task(
         task="fetch_forecast",
         capability="weather",
-        location=(state.get("target_locations") or [{"name": "Ratnagiri"}])[0].get("name", "Ratnagiri"),
+        location=loc,
         time_horizon=state.get("time_horizon", "today"),
     )
     return weather_agent.run(task, state)
 
 
 def ocean_node(state: ORCAState) -> Dict[str, Any]:
-    """Invokes OceanAgent to collect wave telemetry, satellite SST, chlorophyll, and tides."""
+    """Invokes OceanAgent to collect wave telemetry, satellite SST, chlorophyll, and tides for target locations."""
+    raw_locs = state.get("target_locations", [])
+    locations = [
+        loc.get("name") if isinstance(loc, dict) else str(loc)
+        for loc in raw_locs
+    ]
+    # Execute for each location during multi-location comparisons; otherwise target primary location
+    if state.get("intent") == "location_comparison" and len(locations) > 1:
+        loc = None
+    else:
+        loc = locations[0] if locations else "Ratnagiri"
+
     task = Task(
         task="fetch_ocean_metrics",
         capability="ocean",
-        location=(state.get("target_locations") or [{"name": "Ratnagiri"}])[0].get("name", "Ratnagiri"),
+        location=loc,
     )
     res = ocean_agent.run(task, state)
 
     # Also calculate PFZ suitability if fishing_zone capability was requested or query is fishing-related
-    if state.get("intent") == "fishing_zone" or "fishing_zone" in state.get("task_plan", []):
+    if state.get("intent") in ["fishing_zone", "location_comparison"] or "fishing_zone" in state.get("task_plan", []):
         f_res = fishing_agent.run(task, state)
         res["pfz_data"] = f_res.get("pfz_data")
         res["observations"]["pfz"] = f_res.get("pfz_data")
@@ -252,11 +274,28 @@ def response_node(state: ORCAState) -> Dict[str, Any]:
     risk_level = risk.get("risk_level", "UNKNOWN")
     risk_reason = risk.get("reason", "Real marine observations are not connected yet.")
 
-    # Inventory evidence items by classification
-    live_sources = [e["source"] for e in evidence_items if e.get("source_type") == "live" and e.get("status") == "available"]
-    sample_sources = [e["source"] for e in evidence_items if e.get("source_type") == "sample" and e.get("status") == "available"]
-    historical_sources = [e["source"] for e in evidence_items if e.get("source_type") == "historical"]
-    unavailable_items = [e for e in evidence_items if e.get("status") in ["unavailable", "error"]]
+    # Inventory evidence items by classification with location attribution
+    live_sources = []
+    sample_sources = []
+    historical_sources = []
+    unavailable_items = []
+
+    for e in evidence_items:
+        src = e.get("source", "Unknown Source")
+        e_loc = e.get("location")
+        src_label = f"{src} ({e_loc})" if e_loc else src
+        stype = e.get("source_type")
+        status = e.get("status")
+
+        if status in ["unavailable", "error"]:
+            err_msg = e.get("data", {}).get("error", "feed offline")
+            unavailable_items.append(f"{src_label} [{err_msg}]")
+        elif stype == "live" and status == "available":
+            live_sources.append(src_label)
+        elif stype == "sample" and status == "available":
+            sample_sources.append(src_label)
+        elif stype == "historical":
+            historical_sources.append(src_label)
 
     lines = [
         "### ORCA Marine Intelligence Report",
@@ -280,7 +319,7 @@ def response_node(state: ORCAState) -> Dict[str, Any]:
         lines.append(f"- **HISTORICAL Baselines:** {', '.join(sorted(set(historical_sources)))}")
 
     if unavailable_items:
-        lines.append(f"- **UNAVAILABLE / Failed Sources:** {len(unavailable_items)} feed(s) unmapped or offline.")
+        lines.append(f"- **UNAVAILABLE / Failed Sources:** {', '.join(sorted(set(unavailable_items)))}")
 
     # Section 2: Sensor & Tool Observations
     lines.extend([
@@ -288,30 +327,94 @@ def response_node(state: ORCAState) -> Dict[str, Any]:
         "#### 2. Deterministic Observations",
     ])
 
-    if weather_inner or marine_inner:
-        w_temp = weather_inner.get("temperature", "N/A")
-        w_spd = weather_inner.get("wind_speed", "N/A")
-        w_gst = weather_inner.get("wind_gusts", "N/A")
-        w_cond = weather_inner.get("weather_condition", "N/A")
-        m_wave = marine_inner.get("wave_height", "N/A")
-        m_swell = marine_inner.get("swell_height", "N/A")
-        m_curr = marine_inner.get("ocean_current_velocity", "N/A")
+    w_by_loc = weather_payload.get("by_location") or {}
+    o_by_loc = ocean_payload.get("by_location") or {}
+    pfz_by_loc = (state.get("pfz_data") or {}).get("by_location") or {}
 
-        lines.extend([
-            f"- **Wind & Atmosphere (LIVE):** {w_spd} km/h (Gusts: {w_gst} km/h) | Temp: {w_temp}°C | Condition: {w_cond}",
-            f"- **Sea State (LIVE):** Significant Wave Height: {m_wave} m | Swell: {m_swell} m | Surface Current: {m_curr} km/h",
-        ])
+    is_multi_location = len(locations) >= 2 or len(w_by_loc) >= 2
 
-    if ocean_inner:
-        sst = ocean_inner.get("sst_celsius", "N/A")
-        chloro = ocean_inner.get("chlorophyll_mg_m3", "N/A")
-        upwell = ocean_inner.get("upwelling_index", "N/A")
-        lines.append(f"- **Oceanography (SAMPLE):** SST: {sst}°C | Chlorophyll-a: {chloro} mg/m³ | {upwell}")
+    if is_multi_location:
+        failed_locs = []
+        successful_locs = []
 
-    if pfz_inner:
-        pfz_score = pfz_inner.get("composite_score", "N/A")
-        pfz_cat = pfz_inner.get("suitability_category", "N/A")
-        lines.append(f"- **Fishing Zone Suitability (DEMO):** Index {pfz_score}/100 ({pfz_cat})")
+        for loc in locations:
+            loc_w = w_by_loc.get(loc, {})
+            loc_o = o_by_loc.get(loc, {})
+            w_avail = loc_w.get("status") == "available"
+            m_avail = loc_o.get("status") == "available"
+
+            if w_avail and m_avail:
+                successful_locs.append(loc)
+            else:
+                failed_locs.append(loc)
+
+            lines.extend([
+                "",
+                f"##### Observations for {loc}:",
+            ])
+
+            if w_avail:
+                w_dat = loc_w.get("weather_data", {})
+                w_temp = w_dat.get("temperature", "N/A")
+                w_spd = w_dat.get("wind_speed", "N/A")
+                w_gst = w_dat.get("wind_gusts", "N/A")
+                w_cond = w_dat.get("weather_condition", "N/A")
+                lines.append(f"- **Wind & Atmosphere (LIVE):** {w_spd} km/h (Gusts: {w_gst} km/h) | Temp: {w_temp}°C | Condition: {w_cond}")
+            else:
+                lines.append(f"- **Wind & Atmosphere:** `[UNAVAILABLE]` Live weather telemetry unavailable for {loc}.")
+
+            if m_avail:
+                m_dat = loc_o.get("marine_telemetry", {})
+                m_wave = m_dat.get("wave_height", "N/A")
+                m_swell = m_dat.get("swell_height", "N/A")
+                m_curr = m_dat.get("ocean_current_velocity", "N/A")
+                lines.append(f"- **Sea State (LIVE):** Significant Wave Height: {m_wave} m | Swell: {m_swell} m | Surface Current: {m_curr} km/h")
+            else:
+                lines.append(f"- **Sea State:** `[UNAVAILABLE]` Live marine telemetry unavailable for {loc}.")
+
+            oc_dat = loc_o.get("ocean_analytics", {})
+            if oc_dat:
+                sst = oc_dat.get("sst_celsius", "N/A")
+                chloro = oc_dat.get("chlorophyll_mg_m3", "N/A")
+                upwell = oc_dat.get("upwelling_index", "N/A")
+                lines.append(f"- **Oceanography (SAMPLE):** SST: {sst}°C | Chlorophyll-a: {chloro} mg/m³ | {upwell}")
+
+            loc_pfz = pfz_by_loc.get(loc, {})
+            if loc_pfz:
+                p_score = loc_pfz.get("composite_score", "N/A")
+                p_cat = loc_pfz.get("suitability_category", "N/A")
+                lines.append(f"- **Fishing Zone Suitability (DEMO):** Index {p_score}/100 ({p_cat})")
+
+        if failed_locs:
+            lines.extend([
+                "",
+                f"> **[PARTIAL COMPARISON NOTICE]**: Live marine telemetry could not be retrieved for **{', '.join(failed_locs)}** (feed status: UNAVAILABLE). The comparative analysis is partial and restricted to available data ({', '.join(successful_locs)}). Data from one location was strictly not copied or imputed for another.",
+            ])
+    else:
+        if weather_inner or marine_inner:
+            w_temp = weather_inner.get("temperature", "N/A")
+            w_spd = weather_inner.get("wind_speed", "N/A")
+            w_gst = weather_inner.get("wind_gusts", "N/A")
+            w_cond = weather_inner.get("weather_condition", "N/A")
+            m_wave = marine_inner.get("wave_height", "N/A")
+            m_swell = marine_inner.get("swell_height", "N/A")
+            m_curr = marine_inner.get("ocean_current_velocity", "N/A")
+
+            lines.extend([
+                f"- **Wind & Atmosphere (LIVE):** {w_spd} km/h (Gusts: {w_gst} km/h) | Temp: {w_temp}°C | Condition: {w_cond}",
+                f"- **Sea State (LIVE):** Significant Wave Height: {m_wave} m | Swell: {m_swell} m | Surface Current: {m_curr} km/h",
+            ])
+
+        if ocean_inner:
+            sst = ocean_inner.get("sst_celsius", "N/A")
+            chloro = ocean_inner.get("chlorophyll_mg_m3", "N/A")
+            upwell = ocean_inner.get("upwelling_index", "N/A")
+            lines.append(f"- **Oceanography (SAMPLE):** SST: {sst}°C | Chlorophyll-a: {chloro} mg/m³ | {upwell}")
+
+        if pfz_inner:
+            pfz_score = pfz_inner.get("composite_score", "N/A")
+            pfz_cat = pfz_inner.get("suitability_category", "N/A")
+            lines.append(f"- **Fishing Zone Suitability (DEMO):** Index {pfz_score}/100 ({pfz_cat})")
 
     # Geospatial restrictions
     if geo_payload.get("contexts"):
